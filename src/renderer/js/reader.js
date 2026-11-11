@@ -345,7 +345,7 @@ const Reader = (() => {
     if (R.scrollRaf) { cancelAnimationFrame(R.scrollRaf); R.scrollRaf = 0; }
     layout();
     applyHighlights();
-    R.doc.documentElement.scrollTop = 0;
+    const sEl0 = scEl(); if (sEl0) sEl0.scrollTop = 0;
     if (offset) scrollToOffsetNow(toGlobalOff(index, offset));
     bindFrameEvents();
     updateHeader();
@@ -527,11 +527,15 @@ const Reader = (() => {
     el.__anim = { raf: requestAnimationFrame(step) };
   }
 
+  /* 有的书（CSS 里 html/body 的 overflow 组合）滚动容器是 body 而不是 html，
+     直接读写 documentElement.scrollTop 会一直是 0，所以统一走 scrollingElement */
+  function scEl(docu) { const d = docu || R.doc; return (d && (d.scrollingElement || d.documentElement)) || null; }
+
   // 滚动模式下用目标位置 + 每帧插值，滚轮/空格都走得顺滑
   // 滚动模式：滚到本章末尾继续滚就进下一章，往回滚到开头则回上一章末尾
   function scrollStep(dy) {
     if (!R.doc) return;
-    const el = R.doc.documentElement;
+    const el = scEl();
     const max = Math.max(0, el.scrollHeight - R.layout.H);
     const base = (R.scrollTarget == null) ? el.scrollTop : R.scrollTarget;
     if (dy > 0 && base >= max - 2) {
@@ -550,7 +554,7 @@ const Reader = (() => {
   }
   function smoothScrollBy(dy) {
     if (!R.doc) return;
-    const el = R.doc.documentElement;
+    const el = scEl();
     const max = Math.max(0, el.scrollHeight - R.layout.H);
     const base = (R.scrollTarget == null) ? el.scrollTop : R.scrollTarget;
     R.scrollTarget = Math.max(0, Math.min(max, base + dy));
@@ -573,7 +577,7 @@ const Reader = (() => {
 
   function smoothScrollTo(top) {
     if (!R.doc) return;
-    const el = R.doc.documentElement;
+    const el = scEl();
     const max = Math.max(0, el.scrollHeight - R.layout.H);
     R.scrollTarget = Math.max(0, Math.min(max, top));
     if (R.scrollRaf) return;
@@ -811,7 +815,8 @@ const Reader = (() => {
         return sg.start + Math.round(f * sg.len);
       }
       const { total } = textNodes();
-      const frac = R.doc.documentElement.scrollTop / Math.max(1, R.doc.documentElement.scrollHeight - R.layout.H);
+      const sEl = scEl();
+      const frac = sEl.scrollTop / Math.max(1, sEl.scrollHeight - R.layout.H);
       return Math.round(frac * total);
     }
     const at = offsetAtViewportStart();
@@ -875,8 +880,9 @@ const Reader = (() => {
         return Math.min(1, (sg.ch + f) / n);
       }
       const doc = R.doc;
-      const max = Math.max(1, doc.documentElement.scrollHeight - R.layout.H);
-      const f = Math.min(1, Math.max(0, doc.documentElement.scrollTop / max));
+      const sEl = scEl(doc);
+      const max = Math.max(1, sEl.scrollHeight - R.layout.H);
+      const f = Math.min(1, Math.max(0, sEl.scrollTop / max));
       return Math.min(1, (R.chapterIndex + f) / n);
     }
     return Math.min(1, (R.chapterIndex + (R.page + 1) / R.pages) / n);
@@ -1086,7 +1092,7 @@ const Reader = (() => {
       const r = R.doc.createRange();
       r.setStart(pt.node, pt.offset); r.setEnd(pt.node, pt.offset);
       const rect = r.getBoundingClientRect();
-      smoothScrollTo(R.doc.documentElement.scrollTop + rect.top - ANCHOR_Y);
+      smoothScrollTo(scEl().scrollTop + rect.top - ANCHOR_Y);
     } catch (e) {}
   }
 
@@ -1251,7 +1257,7 @@ const Reader = (() => {
     try {
       const sec = await fetchChapterNode(ch);
       if (R.doc !== docRef) return false;
-      const el = docRef.documentElement;
+      const el = scEl(docRef);
       const before = el.scrollHeight;
       docRef.body.insertBefore(sec, docRef.body.firstChild);
       rebuildSeg();
@@ -1268,7 +1274,7 @@ const Reader = (() => {
     try {
       const r = R.doc.createRange();
       r.setStart(pt.node, pt.offset); r.setEnd(pt.node, pt.offset);
-      const el = R.doc.documentElement;
+      const el = scEl();
       el.scrollTop = el.scrollTop + r.getBoundingClientRect().top - ANCHOR_Y;
       R.scrollTarget = null;
     } catch (e) {}
@@ -1291,7 +1297,7 @@ const Reader = (() => {
       // 滚动模式：滚轮交给浏览器原生滚动（GPU 合成，最顺），只在章节首尾接管
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? R.layout.H : 1;
       const dy = e.deltaY * unit;
-      const el = R.doc.documentElement;
+      const el = scEl();
       const atBottom = el.scrollTop + R.layout.H >= el.scrollHeight - 2;
       const atTop = el.scrollTop <= 2;
       const needNext = dy > 0 && atBottom && R.chapterIndex < R.chapters.length - 1;
@@ -1314,7 +1320,7 @@ const Reader = (() => {
         R.chapterIndex = sg.ch;
         updateHeader();
       }
-      const el = R.doc.documentElement;
+      const el = scEl();
       const remain = el.scrollHeight - el.scrollTop - R.layout.H;
       if (remain < R.layout.H * 2.5) appendChapter(lastSegCh() + 1);
       if (el.scrollTop < R.layout.H * 1.5) prependChapter(firstSegCh() - 1);
@@ -1938,7 +1944,7 @@ const Reader = (() => {
     init, open, close, parseStructure, jumpTo, turn, applySettings, applyModeUi,
     chapterSentences, chapterTextLength, locationNow, nextChapter, scrollToOffset, syncToOffset,
     get id() { return R.id; }, get meta() { return R.meta; }, get ready() { return R.ready; },
-    _dev: { layout, applyStyles, captureAnchor, restoreAnchor, pointOfOffset, currentOffset, get R() { return R; } },
+    _dev: { layout, applyStyles, applySettings, captureAnchor, restoreAnchor, pointOfOffset, currentOffset, get R() { return R; } },
     get chapterIndex() { return R.chapterIndex; }, get doc() { return R.doc; },
     get ann() { return R.ann; }, get toc() { return R.toc; },
     goPage, updateProgressUi, renderToc, renderNotes, doSearch, openSearch, closeSearch,

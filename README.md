@@ -1,10 +1,12 @@
 # LinuxReader
 
+[English](README.en.md) | **简体中文**
+
 Linux 桌面的电子书阅读器，EPUB 与 PDF，做得像 Apple 图书那样顺手：六套阅读主题、
 可微调的排版、四色高亮与笔记、左侧目录/书签/高亮三栏、歌词式跟读、平滑滚动，
 书籍与笔记可以用你自己的云盘（WebDAV）或本地目录同步。
 
-- 打包好的 deb：[`dist/linuxreader_1.0.3_amd64.deb`](dist/linuxreader_1.0.3_amd64.deb)（74MB，自带 Electron 运行时，装完即用）
+- 打包好的 deb：[`dist/linuxreader_1.0.6_amd64.deb`](dist/linuxreader_1.0.6_amd64.deb)（约 68MB，自带 Electron 运行时，装完即用）
 - 项目地址：<https://github.com/shao-jun/LinuxReader>
 - 许可证：MIT © 2026 ftosoft
 
@@ -13,7 +15,7 @@ Linux 桌面的电子书阅读器，EPUB 与 PDF，做得像 Apple 图书那样�
 从仓库里下载 deb（或自己跑 `./build/build-deb.sh` 生成），然后：
 
 ```bash
-sudo dpkg -i linuxreader_1.0.3_amd64.deb     # 依赖报错时补 sudo apt -f install
+sudo dpkg -i linuxreader_1.0.6_amd64.deb     # 依赖报错时补 sudo apt -f install
 ```
 
 装完后应用菜单里出现 **LinuxReader**，`.epub` 双击默认用它打开
@@ -30,11 +32,12 @@ linuxreader                  # 打开书库
 ## 功能
 
 **书库**：网格/列表两种视图，合集、标签、收藏、封面、按标题/作者/标签搜索，拖拽或「导入书籍」导入 EPUB/PDF。
+封面取自 EPUB 元数据；若书里没有封面元数据、但第一页是一整页图片，就用那张图当封面。
 
 **阅读**
 - EPUB 与 PDF（PDF 按原样嵌入显示）
 - 翻页 / 滚动两种阅读方式；翻页动效四种：滑动、翻页、淡入淡出、滚动
-- 流畅滚动：滚轮与翻页都走 `requestAnimationFrame` 缓动，不是生硬跳转
+- 无缝滚动：相邻章节拼进同一个文档，滚到章末直接接着往下就是下一章，不会闪一下重新加载；滚动时前后各预取一章
 
 **排版（Aa 面板）**
 - 六套主题：原始、安静、纸张、粗体、平静、专注；每套自带一整套默认排版

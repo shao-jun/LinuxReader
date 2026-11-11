@@ -34,8 +34,23 @@ def wait_true(expr, timeout=20, step=0.4):
         time.sleep(step)
     return False
 
-s.eval("(async()=>{const n=Reader._dev.R.chapters.length; await Reader.jumpTo(Math.max(1, Math.floor(n/2)), 0); return 1})()")
-wait_true("Reader.doc && Reader.doc.body.innerText.trim().length > 100", 25)
+def goto_long_chapter():
+    """找一个正文够长的章节：书里不少章节只是扉页/分卷页，翻页和滚动测不动"""
+    n = int(s.eval("Reader._dev.R.chapters.length") or 0)
+    mid = n // 2
+    order = []
+    for d in range(n):
+        for c in (mid + d, mid - d):
+            if 0 <= c < n and c not in order:
+                order.append(c)
+    for c in order[:10]:
+        s.eval("(async()=>{await Reader.jumpTo(%d, 0); return 1})()" % c)
+        wait_true("Reader.doc && Reader.doc.body.innerText.trim().length > 100", 10)
+        if int(s.eval("Reader._dev.R.pages") or 1) >= 3:
+            return c
+    return None
+
+LONG_CH = goto_long_chapter()
 opened = s.eval("Reader.ready && document.querySelector('#view-reader').classList.contains('active')")
 ok('打开书籍', bool(opened))
 ok('书籍正文有内容', s.eval("Reader.doc ? Reader.doc.body.innerText.trim().length : 0") > 100,
@@ -116,17 +131,21 @@ p0 = s.eval("Reader.doc ? Reader.doc.documentElement.scrollLeft : 0")
 s.eval("Reader.turn(1)")
 time.sleep(0.7)
 p1 = s.eval("Reader.doc.documentElement.scrollLeft")
-ok('淡入淡出可翻页', p1 >= p0, '%s -> %s' % (p0, p1))
+pg0 = s.eval("Reader._dev.R.page")
+ok('淡入淡出可翻页', int(pg0) >= 1, 'page=%s' % pg0)
+pg1 = s.eval("Reader._dev.R.page")
 s.eval("document.querySelector('#aa-body [data-tc=transition][data-v=page]').click(); Reader.turn(1)")
 time.sleep(0.7)
-ok('翻页动效可翻页', s.eval("Reader.doc.documentElement.scrollLeft") != p1,
-   '%s -> %s' % (p1, s.eval("Reader.doc.documentElement.scrollLeft")))
+pg2 = s.eval("Reader._dev.R.page")
+ok('翻页动效可翻页', int(pg2) > int(pg1), 'page %s -> %s' % (pg1, pg2))
 s.eval("document.querySelector('#aa-body [data-tc=transition][data-v=scroll]').click()")
 time.sleep(0.9)
 ok('滚动模式', s.eval("S.settings.mode") == 'scroll' and s.eval("S.settings.transition") == 'scroll')
-s.eval("Reader.turn(1)")
-time.sleep(0.8)
-ok('滚动模式可滚动', s.eval("Reader.doc.documentElement.scrollTop") > 0,
+# 用真实滚轮事件，turn() 走 rAF 动画，窗口在后台被节流时测不出来
+for _ in range(4):
+    s.send('Input.dispatchMouseEvent', type='mouseWheel', x=700, y=400, deltaX=0, deltaY=260)
+    time.sleep(0.12)
+ok('滚动模式可滚动', int(s.eval("(Reader._dev.R.doc.scrollingElement||Reader._dev.R.doc.documentElement).scrollTop") or 0) > 0,
    s.eval("Reader.doc.documentElement.scrollTop"))
 s.eval("document.querySelector('#aa-body [data-tc=transition][data-v=slide]').click()")
 time.sleep(0.6)

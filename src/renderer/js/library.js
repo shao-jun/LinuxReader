@@ -50,10 +50,11 @@ const Library = (() => {
     const url = coverUrl(book);
     const p = book.progress && book.progress.percent ? book.progress.percent : 0;
     const hue = colorFor(book.id);
+    // 有封面时只留图片；图片加载失败再把渐变占位显示出来（占位是绝对定位，盖在图上就看不见封面了）
     return '<div class="book-card" data-id="' + book.id + '">' +
       '<div class="book-cover">' +
-      (url ? '<img loading="lazy" src="' + esc(url) + '" alt="" onerror="this.style.display=\'none\'">' : '') +
-      '<div class="cover-fallback" style="background:linear-gradient(155deg,hsl(' + hue + ' 38% 48%),hsl(' + ((hue + 40) % 360) + ' 44% 30%))">' +
+      (url ? '<img loading="lazy" src="' + esc(url) + '" alt="" onerror="this.style.display=\'none\';var f=this.nextElementSibling;if(f)f.style.display=\'flex\'">' : '') +
+      '<div class="cover-fallback" style="background:linear-gradient(155deg,hsl(' + hue + ' 38% 48%),hsl(' + ((hue + 40) % 360) + ' 44% 30%));' + (url ? 'display:none' : '') + '">' +
       '<div class="cf-title">' + esc(book.title || '未命名') + '</div>' +
       '<div class="cf-author">' + esc(book.author || '') + '</div></div>' +
       (book.favorite ? '<div class="badge-fav">★</div>' : '') +
