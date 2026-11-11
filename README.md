@@ -4,14 +4,16 @@ Linux 桌面的电子书阅读器，EPUB 与 PDF，做得像 Apple 图书那样�
 可微调的排版、四色高亮与笔记、左侧目录/书签/高亮三栏、歌词式跟读、平滑滚动，
 书籍与笔记可以用你自己的云盘（WebDAV）或本地目录同步。
 
-- 打包好的 deb：`dist/linuxreader_1.0.0_amd64.deb`（自带 Electron 运行时，装完即用）
+- 打包好的 deb：[`dist/linuxreader_1.0.1_amd64.deb`](dist/linuxreader_1.0.1_amd64.deb)（74MB，自带 Electron 运行时，装完即用）
 - 项目地址：<https://github.com/shao-jun/LinuxReader>
 - 许可证：MIT © 2026 ftosoft
 
 ## 安装
 
+从仓库里下载 deb（或自己跑 `./build/build-deb.sh` 生成），然后：
+
 ```bash
-sudo dpkg -i linuxreader_1.0.0_amd64.deb
+sudo dpkg -i linuxreader_1.0.1_amd64.deb     # 依赖报错时补 sudo apt -f install
 ```
 
 装完后应用菜单里出现 **LinuxReader**，`.epub` 双击默认用它打开
@@ -49,6 +51,9 @@ linuxreader                  # 打开书库
 
 **笔记**：选中正文即弹出操作条——黄/绿/蓝/粉高亮、下划线、写笔记、复制、搜索。
 高亮与笔记随书保存，跟随同步。
+
+**键盘**：`←/→` 或空格翻页，`Ctrl+B` 展开/收起左侧栏，`B` 加书签，
+`Esc` 先关浮层、再按回书库（等同于左上角「‹ 书库」）。
 
 **歌词模式**：把当前章切成句子，逐句高亮并居中自动滚动，像跟着歌词读；
 配合系统朗读（`espeak-ng`，装了就能用）可以边听边看。

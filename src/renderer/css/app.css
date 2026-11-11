@@ -82,7 +82,7 @@ input, select { font-family: inherit; font-size: inherit; color: inherit; }
 
 /* ---------- 视图 ---------- */
 #app { height: calc(100% - 38px); position: relative; }
-.view { position: absolute; inset: 0; display: none; }
+.view { position: absolute; top: 38px; right: 0; bottom: 0; left: 0; display: none; }  /* 让出 38px 自定义标题栏，否则阅读器顶栏会被盖住 */
 .view.active { display: flex; }
 
 /* ---------- 侧边栏 ---------- */
@@ -225,7 +225,11 @@ input, select { font-family: inherit; font-size: inherit; color: inherit; }
 }
 .icon-btn:hover { background: var(--hover); color: var(--text); }
 .icon-btn.active { background: var(--accent-soft); color: var(--accent); }
-#btn-back-lib { font-size: 20px; padding-bottom: 3px; }
+#btn-back-lib.back-btn {
+  height: 30px; padding: 0 12px 2px 8px; border-radius: 8px; font-size: 13.5px;
+  color: var(--text-2); display: flex; align-items: center; gap: 2px;
+}
+#btn-back-lib.back-btn:hover { background: var(--hover); color: var(--text); }
 .reader-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; padding-left: 2px; }
 #r-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
 .r-chapter { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -540,3 +544,4 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .ab-line { font-size: 12px; color: var(--text-2); line-height: 1.9; }
 .link { color: var(--accent); font-size: 12px; text-decoration: none; }
 .link:hover { text-decoration: underline; }
+

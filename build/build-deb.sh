@@ -21,6 +21,11 @@ mkdir -p dist "$ROOT"/DEBIAN \
 echo "== 复制 Electron 运行时 =="
 cp -a node_modules/electron/dist/. "$ROOT/opt/$APP/"
 rm -rf "$ROOT/opt/$APP/resources/default_app.asar"
+# 只留中英文语言包（locales 原本 40MB，绝大部分用不到）
+if [ -d "$ROOT/opt/$APP/locales" ]; then
+  find "$ROOT/opt/$APP/locales" -maxdepth 1 -type f -name '*.pak' \
+    ! -name 'zh-CN.pak' ! -name 'zh-TW.pak' ! -name 'en-US.pak' ! -name 'en-GB.pak' -delete
+fi
 
 echo "== 复制应用代码 =="
 cp -a src package.json "$ROOT/opt/$APP/resources/app/"

@@ -328,8 +328,11 @@ const Reader = (() => {
              font-family:${font} !important; font-size:${fs}px !important; line-height:${lh} !important;
              font-weight:${weight} !important; letter-spacing:${ls}px !important; word-spacing:${ws}px !important;
              -webkit-font-smoothing:antialiased; }
+      html { color:${th.text} !important; }
       body, body p, body div, body span, body li, body td, body th, body blockquote, body dd, body dt, body a, body figcaption, body h1, body h2, body h3, body h4, body h5, body h6 {
-             font-family:${font} !important; color:inherit !important; }
+             font-family:${font} !important; }
+      /* 子元素一律跟随正文色；只有这里不含 body 本身，否则 body 会去继承 html 的默认黑 */
+      body *:not(a) { color:inherit !important; }
       body p, body li, body dd, body blockquote { font-weight:${weight} !important; letter-spacing:${ls}px !important; word-spacing:${ws}px !important; }
       body b, body strong, body h1, body h2, body h3 { font-weight:${Math.min(900, weight + 200)} !important; }
       body h1, body h2, body h3 { line-height:1.4 !important; }
@@ -378,32 +381,39 @@ const Reader = (() => {
       const gap = W - cw;
       const padY = Math.round(H * 0.055);
       body.style.cssText = [
-        'margin:0 0 0 ' + M + 'px', 'padding:' + padY + 'px 0', 'box-sizing:border-box',
+        'box-sizing:border-box',
         'width:' + cw + 'px', 'height:' + H + 'px',
         'column-width:' + cw + 'px', 'column-gap:' + gap + 'px', 'column-fill:auto',
         // 多栏溢出必须可见，html 上的 overflow:hidden 才是分页的裁剪面
         'overflow:visible', 'background:' + th.paper
       ].join(';');
+      // 书籍自带的 body{margin:0 !important} 会盖掉行内边距，这里必须用 important 才能居中
+      body.style.setProperty('margin', '0 0 0 ' + M + 'px', 'important');
+      body.style.setProperty('padding', padY + 'px 0', 'important');
       R.layout.pageW = W;
       R.layout.M = M;
+      R.layout.padY = padY;
       const SW = Math.max(body.scrollWidth, html.scrollWidth);
       R.pages = Math.max(1, Math.ceil((SW - M) / W));
     } else {
       const cw = Math.min(W - 2 * pad, 720);
       body.style.cssText = [
-        'margin:0 auto', 'padding:' + Math.round(pad * 0.7) + 'px 0',
         'width:' + cw + 'px', 'height:auto', 'overflow:visible', 'background:' + th.paper
       ].join(';');
+      body.style.setProperty('display', 'block', 'important');
+      body.style.setProperty('margin', '0 auto', 'important');
+      body.style.setProperty('padding', Math.round(pad * 0.7) + 'px 0 ' + Math.round(H * 0.4) + 'px', 'important');
       html.style.overflowY = 'auto';
       R.layout.pageW = cw;
       R.layout.M = 0;
+      R.layout.padY = Math.round(pad * 0.7);
       R.pages = 1;
-      body.style.paddingBottom = Math.round(H * 0.4) + 'px';
     }
   }
 
   /* ============================ 平滑滚动 ============================ */
   const smoothOn = () => S.settings.smooth !== false;
+  const ANCHOR_Y = 90;                 // 定位锚点：视口顶部往下 90px 这一行
 
   function cancelAnim(el) {
     if (el && el.__anim) { cancelAnimationFrame(el.__anim.raf); el.__anim = null; }
@@ -426,6 +436,24 @@ const Reader = (() => {
   }
 
   // 滚动模式下用目标位置 + 每帧插值，滚轮/空格都走得顺滑
+  // 滚动模式：滚到本章末尾继续滚就进下一章，往回滚到开头则回上一章末尾
+  function scrollStep(dy) {
+    if (!R.doc) return;
+    const el = R.doc.documentElement;
+    const max = Math.max(0, el.scrollHeight - R.layout.H);
+    const base = (R.scrollTarget == null) ? el.scrollTop : R.scrollTarget;
+    if (dy > 0 && base >= max - 2) {
+      if (R.chapterIndex < R.chapters.length - 1) { R.scrollTarget = null; loadChapter(R.chapterIndex + 1, 0); return; }
+      smoothScrollTo(max);
+      return;
+    }
+    if (dy < 0 && base <= 2) {
+      if (R.chapterIndex > 0) { R.scrollTarget = null; loadChapter(R.chapterIndex - 1, 999999); return; }
+      smoothScrollTo(0);
+      return;
+    }
+    smoothScrollBy(dy);
+  }
   function smoothScrollBy(dy) {
     if (!R.doc) return;
     const el = R.doc.documentElement;
@@ -515,8 +543,27 @@ const Reader = (() => {
       turnEffect(x, R.page >= prev ? 1 : -1);
     }
     if (!silent) { updateProgressUi(); scheduleSave(); }
+    // 页首字符作为锚点：用户翻页时更新，改排版时只认它，避免一页页往回退
+    markPagedAnchor(silent ? 0 : 360);
   }
 
+  function goOffsetExact(off) {
+    const pt = pointOfOffset(off);
+    if (!pt) return;
+    try {
+      const r = R.doc.createRange();
+      r.setStart(pt.node, pt.offset); r.setEnd(pt.node, pt.offset);
+      const html = R.doc.documentElement;
+      const absX = r.getBoundingClientRect().left + html.scrollLeft;
+      // 必须落在页网格上：只有 scrollLeft = q*W 时当前页正好是「页边距 + 一栏 + 页边距」，
+      // 否则上一栏的尾巴会露出来，下次取锚点就会抓到前面的字，一页页往回退
+      const M = R.layout.M || 0, W = R.layout.pageW;
+      const q = Math.max(0, Math.min(R.pages - 1, Math.floor(Math.max(0, absX) / W)));
+      cancelAnim(html);
+      html.scrollLeft = q * W;
+      R.page = q;
+    } catch (e) {}
+  }
   function pageOfOffset(off) {
     if (!R.doc) return 0;
     if (R.mode === 'scroll') return 0;
@@ -574,20 +621,98 @@ const Reader = (() => {
     } catch (e) { return 0; }
   }
 
+  // 记录“当前正在读的那一行”及其在视口里的像素位置，重排后按像素还原，避免串行漂移
+  function markPagedAnchor(delay) {
+    R.pagedAnchor = null;
+    const run = () => { if (R.doc) R.pagedAnchor = offsetAtViewportStart(); };
+    if (delay) setTimeout(run, delay); else run();
+  }
+
+  // 分页模式以“段落开头”为锚点：同一段落始终停在页首，重排不会一页页往前后跑
+  function paragraphStartOf(off) {
+    const pt = pointOfOffset(off);
+    if (!pt) return off;
+    let n = pt.node;
+    while (n && n.nodeType !== 1) n = n.parentNode;
+    while (n && n.parentNode && n.parentNode !== R.doc.body) {
+      if (/^(P|DIV|LI|BLOCKQUOTE|SECTION|ARTICLE|H1|H2|H3|H4|H5|H6|DD|DT|TD|FIGCAPTION)$/.test(n.tagName)) break;
+      n = n.parentNode;
+    }
+    if (!n || !R.doc.body.contains(n)) return off;
+    try { return offsetOfPoint(n, 0); } catch (e) { return off; }
+  }
+  function captureAnchor() {
+    let off = currentOffset();
+    if (R.mode === 'paged') off = (R.pagedAnchor == null) ? paragraphStartOf(off) : R.pagedAnchor;
+    const pt = pointOfOffset(off);
+    if (!pt) return { off, y: ANCHOR_Y, dx: 0 };
+    try {
+      const r = R.doc.createRange();
+      r.setStart(pt.node, pt.offset); r.setEnd(pt.node, pt.offset);
+      const rect = r.getBoundingClientRect();
+      return { off, y: rect.top, dx: rect.left };
+    } catch (e) { return { off, y: ANCHOR_Y, dx: 0 }; }
+  }
+
+  // 分页模式：把锚点那个字放回它在视口里原来的横向位置，重排后正文不会左右跳
+  function restoreAnchorX(a) {
+    const pt = pointOfOffset(a.off);
+    if (!pt) return;
+    try {
+      const r = R.doc.createRange();
+      r.setStart(pt.node, pt.offset); r.setEnd(pt.node, pt.offset);
+      const html = R.doc.documentElement;
+      const absX = r.getBoundingClientRect().left + html.scrollLeft;
+      cancelAnim(html);
+      html.scrollLeft = Math.max(0, absX - (a.dx || 0));
+      R.page = Math.max(0, Math.min(R.pages - 1, Math.round(html.scrollLeft / R.layout.pageW)));
+    } catch (e) {}
+  }
+  function restoreAnchor(a) {
+    if (!a) return;
+    const pt = pointOfOffset(a.off);
+    if (!pt) return;
+    try {
+      const r = R.doc.createRange();
+      r.setStart(pt.node, pt.offset); r.setEnd(pt.node, pt.offset);
+      const el = R.doc.documentElement;
+      el.scrollTop = el.scrollTop + r.getBoundingClientRect().top - a.y;
+    } catch (e) {}
+  }
+  // 分页模式取“当前页左上角第一个字”的偏移：多栏里 caretRangeFromPoint 会命中别的栏，
+  // 直接按几何位置扫，避免每次重排都往回退一页
+  function offsetAtViewportStart() {
+    const { list } = textNodes();
+    if (!list.length) return 0;
+    const sc = R.doc.documentElement.scrollLeft;
+    const px = Math.max(0, sc - 1);
+    for (const it of list) {
+      const node = it.node, len = node.nodeValue.length;
+      if (!len) continue;
+      for (let i = 0; i < len; i++) {
+        try {
+          const r = R.doc.createRange();
+          r.setStart(node, i); r.setEnd(node, Math.min(len, i + 1));
+          const rect = r.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) continue;
+          const absL = rect.left + sc;
+          if (absL >= px - 1) return it.start + i;
+        } catch (e) { break; }
+      }
+    }
+    return 0;
+  }
   function currentOffset() {
     if (!R.doc) return 0;
     if (R.mode === 'scroll') {
-      const range = R.doc.caretRangeFromPoint ? R.doc.caretRangeFromPoint(R.layout.W / 2, 60) : null;
+      const range = R.doc.caretRangeFromPoint ? R.doc.caretRangeFromPoint(R.layout.W / 2, ANCHOR_Y) : null;
       if (range) return offsetOfPoint(range.startContainer, range.startOffset);
       const { total } = textNodes();
       const frac = R.doc.documentElement.scrollTop / Math.max(1, R.doc.documentElement.scrollHeight - R.layout.H);
       return Math.round(frac * total);
     }
-    const x = R.layout.pad / 2 + 2;
-    const range = R.doc.caretRangeFromPoint ? R.doc.caretRangeFromPoint(x, 14) : null;
-    if (range && R.doc.body.contains(range.startContainer)) {
-      return offsetOfPoint(range.startContainer, range.startOffset);
-    }
+    const at = offsetAtViewportStart();
+    if (at) return at;
     const { total } = textNodes();
     return Math.round((R.page / Math.max(1, R.pages)) * total);
   }
@@ -631,6 +756,7 @@ const Reader = (() => {
 
   /* ============================ 进度 ============================ */
   function bookPercent() {
+    if (!R.doc) return 0;                       // 章节还没加载完时不要炸
     const n = R.chapters.length || 1;
     if (R.mode === 'scroll') {
       const doc = R.doc;
@@ -842,7 +968,7 @@ const Reader = (() => {
       const r = R.doc.createRange();
       r.setStart(pt.node, pt.offset); r.setEnd(pt.node, pt.offset);
       const rect = r.getBoundingClientRect();
-      smoothScrollTo(R.doc.documentElement.scrollTop + rect.top - 90);
+      smoothScrollTo(R.doc.documentElement.scrollTop + rect.top - ANCHOR_Y);
     } catch (e) {}
   }
 
@@ -902,7 +1028,8 @@ const Reader = (() => {
     doc.addEventListener('mouseup', onMouseUp);
     doc.addEventListener('keyup', onMouseUp);
     doc.addEventListener('click', onClick);
-    doc.addEventListener('mousedown', () => hideSelMenu());
+    // 点正文（iframe 里的文档）也要能关掉 Aa / ⋯ 浮层：外层的 document click 收不到 iframe 内的点击
+    doc.addEventListener('mousedown', () => { hideSelMenu(); closePanels(); });
     win.addEventListener('scroll', onScroll, { passive: true });
     doc.addEventListener('wheel', (e) => {
       if (R.mode === 'paged') {
@@ -910,10 +1037,18 @@ const Reader = (() => {
         return;
       }
       // 滚动模式：接管滚轮做逐帧平滑位移（鼠标一格 = 80% 视图高，触控板小步长按比例）
-      if (!smoothOn()) return;
-      e.preventDefault();
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? R.layout.H : 1;
-      smoothScrollBy(e.deltaY * unit);
+      const dy = e.deltaY * unit;
+      if (!smoothOn()) {
+        // 关掉平滑时用原生滚动，只在章节边界接管，否则会卡在本章末尾
+        const el = R.doc.documentElement;
+        const atBottom = el.scrollTop + R.layout.H >= el.scrollHeight - 2;
+        const atTop = el.scrollTop <= 2;
+        if ((dy > 0 && atBottom) || (dy < 0 && atTop)) { e.preventDefault(); scrollStep(dy); }
+        return;
+      }
+      e.preventDefault();
+      scrollStep(dy);
     }, { passive: false });
     doc.addEventListener('keydown', (e) => {
       if (R.mode !== 'paged') return;
@@ -995,7 +1130,7 @@ const Reader = (() => {
     if (!R.ready) return;
     hideJumpBack();
     if (R.mode === 'scroll') {
-      smoothScrollBy(dir * R.layout.H * 0.86);
+      scrollStep(dir * R.layout.H * 0.86);
       return;
     }
     if (dir > 0 && R.page >= R.pages - 1) {
@@ -1039,16 +1174,12 @@ const Reader = (() => {
 
   function applySettings() {
     if (!R.doc || !R.ready) return;
-    const off = currentOffset();
-    const pageFrac = R.mode === 'paged' ? R.page / Math.max(1, R.pages) : 0;
+    const a = captureAnchor();            // 以“正在读的那一行”为锚点
     applyStyles();
     layout();
-    if (R.mode === 'paged') {
-      goPage(Math.round(pageFrac * R.pages));
-      applyHighlights();
-    } else {
-      scrollToOffset(off);
-    }
+    applyHighlights();
+    if (R.mode === 'paged') goOffsetExact(a.off);
+    else { restoreAnchor(a); restoreAnchor(a); }   // 二次校正：不同字号的行高残差
     updateProgressUi();
   }
 
@@ -1269,12 +1400,26 @@ const Reader = (() => {
     document.addEventListener('keydown', (e) => {
       if ($('#view-reader').classList.contains('active') === false) return;
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'Escape') { hideSelMenu(); hideNotePop(); closeDrawers(); closeSearch(); closePanels(); }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        setSide(sideTab || 'toc');         // Ctrl+B 展开 / 收起目录
+        return;
+      }
+      if (e.key === 'Escape') {
+        // 有浮层先关浮层；都没有就回书库
+        const floating = !$('#sel-menu').classList.contains('hidden') ||
+          !$('#note-pop').classList.contains('hidden') ||
+          !$('#search-overlay').classList.contains('hidden') ||
+          !!$('.panel.open') || $('#rd-side').classList.contains('open');
+        hideSelMenu(); hideNotePop(); closeSearch(); closePanels();
+        if (floating) { closeDrawers(); return; }
+        close();
+        return;
+      }
       if (e.key === 'ArrowRight') turn(1);
       if (e.key === 'ArrowLeft') turn(-1);
       if (e.key === ' ') { e.preventDefault(); turn(1); }
       if (e.key === 'b' || e.key === 'B') toggleBookmark();
-      if (e.key === 'Escape' && R.mode === 'paged') return;
     });
     window.addEventListener('resize', debounce(() => { if (R.ready) applySettings(); }, 220));
     // 选中条 / 笔记弹层的按钮（用事件委托，元素在 HTML 里固定）
@@ -1444,7 +1589,10 @@ const Reader = (() => {
     if (tab === 'notes') renderNotes();
     relayoutSoon();
   }
-  function closeDrawers() { const s = $('#rd-side'); if (s) { s.classList.remove('open'); relayoutSoon(); } }
+  function closeDrawers() {
+    const s = $('#rd-side');
+    if (s) { s.classList.remove('open'); relayoutSoon(); }
+  }
   function relayoutSoon() {
     clearTimeout(relayoutSoon._t);
     relayoutSoon._t = setTimeout(() => {
@@ -1498,6 +1646,7 @@ const Reader = (() => {
     init, open, close, parseStructure, jumpTo, turn, applySettings, applyModeUi,
     chapterSentences, chapterTextLength, locationNow, nextChapter, scrollToOffset, syncToOffset,
     get id() { return R.id; }, get meta() { return R.meta; }, get ready() { return R.ready; },
+    _dev: { layout, applyStyles, captureAnchor, restoreAnchor, pointOfOffset, currentOffset, get R() { return R; } },
     get chapterIndex() { return R.chapterIndex; }, get doc() { return R.doc; },
     get ann() { return R.ann; }, get toc() { return R.toc; },
     goPage, updateProgressUi, renderToc, renderNotes, doSearch, openSearch, closeSearch,
