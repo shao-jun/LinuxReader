@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' linuxreader:; img-src 'self' linuxreader: data: blob:; style-src 'self' linuxreader: 'unsafe-inline'; script-src 'self' linuxreader:; media-src 'self' linuxreader: file: blob:; font-src 'self' linuxreader: data:;">
+<title>LinuxReader</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body data-theme="light">
+
+<div id="titlebar">
+  <div class="tb-brand"><span class="mark"></span><span>LinuxReader</span></div>
+  <div class="tb-drag"></div>
+  <div class="tb-actions">
+    <button class="tbtn" data-win="min" title="最小化"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 5h6" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    <button class="tbtn" data-win="max" title="最大化"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="2" y="2" width="6" height="6" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    <button class="tbtn close" data-win="close" title="关闭"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.2"/></svg></button>
+  </div>
+</div>
+
+<!-- ===================== 书库 ===================== -->
+<section id="view-library" class="view active">
+  <aside class="sidebar">
+    <div class="side-group">
+      <button class="side-item active" data-shelf="all"><span class="si-ico">▤</span>全部书籍<span class="count" id="count-all"></span></button>
+      <button class="side-item" data-shelf="recent"><span class="si-ico">◷</span>最近阅读</button>
+      <button class="side-item" data-shelf="favorite"><span class="si-ico">★</span>收藏</button>
+    </div>
+    <div class="side-group collections-group">
+      <div class="side-head"><span>合集</span><button class="mini-btn" id="btn-add-collection" title="新建合集">＋</button></div>
+      <div id="collections" class="collections"></div>
+      <div class="side-head" style="margin-top:12px"><span>标签</span></div>
+      <div id="tags" class="collections"></div>
+    </div>
+    <div class="side-foot">
+      <button class="side-item" id="btn-sync-view"><span class="si-ico">⇅</span>同步与账号<span class="sync-dot" id="sync-dot"></span></button>
+      <button class="side-item" id="btn-settings"><span class="si-ico">⚙</span>阅读设置</button>
+    </div>
+  </aside>
+
+  <main class="lib-main">
+    <header class="lib-head">
+      <div class="lib-title">
+        <h1 id="shelf-title">全部书籍</h1>
+        <p id="shelf-sub">0 本</p>
+      </div>
+      <div class="lib-tools">
+        <div class="search-box"><span class="s-ico">⌕</span><input id="lib-search" placeholder="搜索书名或作者"></div>
+        <select id="sort" class="select" title="排序">
+          <option value="recent">最近阅读</option>
+          <option value="added">添加时间</option>
+          <option value="title">书名</option>
+          <option value="author">作者</option>
+        </select>
+        <div class="seg" id="view-toggle">
+          <button data-mode="grid" class="on" title="网格">▦</button>
+          <button data-mode="list" title="列表">☰</button>
+        </div>
+        <button class="btn primary" id="btn-import">导入书籍</button>
+      </div>
+    </header>
+    <div class="lib-scroll">
+      <div id="book-grid" class="grid"></div>
+      <div id="empty-state" class="empty hidden">
+        <div class="empty-art">📚</div>
+        <h2>把书放进书架</h2>
+        <p>支持 EPUB 与 PDF。点击「导入书籍」，或把文件直接拖到这里。</p>
+        <button class="btn primary" id="btn-import-2">选择文件</button>
+        <p class="hint">书与笔记都保存在本机，可在「同步与账号」里填入自己的云盘账号（WebDAV）。</p>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ===================== 阅读器 ===================== -->
+<section id="view-reader" class="view">
+  <div class="reader-top" id="reader-top">
+    <button class="icon-btn" id="btn-back-lib" title="返回书库">‹</button>
+    <div class="reader-title">
+      <span id="r-title">书名</span>
+      <span id="r-chapter" class="r-chapter"></span>
+    </div>
+    <div class="reader-tools">
+      <button class="icon-btn" id="btn-toc" title="目录">目录</button>
+      <button class="icon-btn" id="btn-search-book" title="全书搜索">搜索</button>
+      <button class="icon-btn" id="btn-bookmark" title="添加书签">书签</button>
+      <button class="icon-btn" id="btn-notes" title="高亮与笔记">笔记</button>
+      <button class="icon-btn" id="btn-karaoke" title="歌词模式">歌词</button>
+      <button class="icon-btn" id="btn-aa" title="字体与主题">Aa</button>
+      <button class="icon-btn" id="btn-reader-menu" title="更多">⋯</button>
+    </div>
+  </div>
+
+  <div class="reader-main">
+  <aside class="rd-side" id="rd-side">
+    <div class="rd-tabs" id="rd-tabs">
+      <button data-tab="toc" class="on">目录</button>
+      <button data-tab="marks">书签</button>
+      <button data-tab="notes">高亮标记</button>
+    </div>
+    <div class="rd-pane" id="pane-toc"><div id="toc-list" class="rd-list"></div></div>
+    <div class="rd-pane hidden" id="pane-marks"><div id="bookmark-list" class="rd-list"></div></div>
+    <div class="rd-pane hidden" id="pane-notes">
+      <div class="notes-filter" id="notes-filter">
+        <button class="chip on" data-filter="all">全部</button>
+        <button class="chip" data-filter="note">有笔记</button>
+        <button class="chip" data-filter="highlight">仅高亮</button>
+      </div>
+      <div id="notes-list" class="rd-list"></div>
+    </div>
+    <div class="rd-foot">
+      <button class="rd-collapse" id="btn-close-side" title="收起侧栏">« 收起</button>
+    </div>
+  </aside>
+  <div class="reader-stage" id="reader-stage">
+    <iframe id="book-frame" sandbox="allow-same-origin" title="书籍内容"></iframe>
+    <div class="pdf-host hidden" id="pdf-host"></div>
+    <div class="tap-zone prev" id="zone-prev"></div>
+    <div class="tap-zone next" id="zone-next"></div>
+    <div class="page-flash" id="page-flash"></div>
+    <button class="jump-back hidden" id="jump-back">← 返回阅读位置</button>
+    <div id="sel-menu" class="sel-menu hidden">
+      <button class="swatch yellow" data-color="yellow" title="黄色高亮"></button>
+      <button class="swatch green" data-color="green" title="绿色高亮"></button>
+      <button class="swatch blue" data-color="blue" title="蓝色高亮"></button>
+      <button class="swatch pink" data-color="pink" title="粉色高亮"></button>
+      <button class="swatch underline" data-color="underline" title="下划线"></button>
+      <div class="sel-sep"></div>
+      <button class="txt" id="sel-note">写笔记</button>
+      <button class="txt" id="sel-copy">复制</button>
+      <button class="txt" id="sel-search">搜索</button>
+    </div>
+    <div id="note-pop" class="note-pop hidden"></div>
+    <div id="karaoke" class="karaoke hidden"></div>
+  </div>
+  </div>
+
+  <div class="reader-bottom" id="reader-bottom">
+    <div class="rb-chapter" id="rb-chapter">序章</div>
+    <div class="rb-track">
+      <input type="range" id="progress" min="0" max="1000" value="0">
+    </div>
+    <div class="rb-pages" id="rb-pages">1 / 1</div>
+  </div>
+
+  <!-- Aa 面板 -->
+  <div class="panel aa-panel" id="panel-aa">
+    <div class="aa-body" id="aa-body"></div>
+  </div>
+
+  <!-- 更多菜单 -->
+  <div class="panel menu-panel" id="panel-menu">
+    <button data-menu="karaoke">歌词（卡拉OK）模式</button>
+    <button data-menu="scroll">切换滚动 / 翻页</button>
+    <button data-menu="info">书籍信息</button>
+    <button data-menu="reveal">在文件夹中显示</button>
+    <button data-menu="sync">立即同步</button>
+    <button data-menu="settings">阅读设置…</button>
+  </div>
+
+  <!-- 全书搜索 -->
+  <div class="search-overlay hidden" id="search-overlay">
+    <div class="search-panel">
+      <div class="search-field">
+        <span class="s-ico">⌕</span>
+        <input id="book-search-input" placeholder="在本书中搜索…">
+        <button class="icon-btn" id="btn-close-search">✕</button>
+      </div>
+      <div class="search-results" id="search-results"><p class="muted">输入关键词后回车</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 弹层 ===================== -->
+<div class="modal-mask hidden" id="modal-mask">
+  <div class="modal" id="modal-settings"></div>
+  <div class="modal" id="modal-sync"></div>
+  <div class="modal" id="modal-info"></div>
+  <div class="modal" id="modal-collection"></div>
+</div>
+
+<div id="ctx-menu" class="ctx-menu hidden"></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/util.js"></script>
+<script src="js/library.js"></script>
+<script src="js/reader.js"></script>
+<script src="js/karaoke.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

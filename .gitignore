@@ -1,0 +1,7 @@
+node_modules/
+dist/
+build/pkgroot/
+shots/
+tools/*.epub
+*.log
+.DS_Store
