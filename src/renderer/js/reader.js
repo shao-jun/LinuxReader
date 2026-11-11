@@ -10,7 +10,7 @@ const Reader = (() => {
     chapters: [], toc: [], spineHrefs: [],
     layout: { W: 0, H: 0, pad: 0, pageW: 0 },
     nodes: null, nodesToken: -1,
-    returnLoc: null, selRange: null, selOffsets: null,
+    returnLoc: null, selRange: null, selOffsets: null, seg: [],
     textCache: new Map(), searchIndex: null,
     saveTimer: null, resizeTimer: null, openedAt: 0
   };
@@ -268,7 +268,44 @@ const Reader = (() => {
     });
   }
 
+  async function loadScroll(index, offset, opts = {}) {
+    if (!R.chapters.length) return;
+    index = Math.max(0, Math.min(R.chapters.length - 1, index));
+    const token = ++R.token;
+    const f = frame();
+    const p = waitFrameLoad();
+    f.src = chapterUrl(index);
+    try { await p; } catch (e) { toast('这一节加载失败'); return; }
+    if (token !== R.token) return;
+    R.chapterIndex = index;
+    R.doc = f.contentDocument;
+    R.win = f.contentWindow;
+    R.nodes = null; R.nodesToken = -1;
+    R.seg = [];
+    if (!R.doc || !R.doc.body) return;
+    applyStyles();
+    await waitAssets();
+    if (token !== R.token) return;
+    wrapSeg(index);
+    R.scrollTarget = null;
+    if (R.scrollRaf) { cancelAnimationFrame(R.scrollRaf); R.scrollRaf = 0; }
+    layout();
+    applyHighlights();
+    R.doc.documentElement.scrollTop = 0;
+    if (offset) scrollToOffsetNow(toGlobalOff(index, offset));
+    bindFrameEvents();
+    updateHeader();
+    updateProgressUi();
+    appendChapter(index + 1);
+    if (opts.markRead !== false) touchLibrary();
+  }
+
   async function loadChapter(index, offset, opts = {}) {
+    if (R.mode === 'scroll') return loadScroll(index, offset, opts);
+    return loadPageChapter(index, offset, opts);
+  }
+
+  async function loadPageChapter(index, offset, opts = {}) {
     if (!R.chapters.length) return;
     index = Math.max(0, Math.min(R.chapters.length - 1, index));
     const token = ++R.token;
@@ -333,6 +370,7 @@ const Reader = (() => {
              font-family:${font} !important; }
       /* 子元素一律跟随正文色；只有这里不含 body 本身，否则 body 会去继承 html 的默认黑 */
       body *:not(a) { color:inherit !important; }
+      section.lr-seg + section.lr-seg { margin-top:2.6em; padding-top:1.4em; border-top:1px solid rgba(128,128,128,.22); }
       body p, body li, body dd, body blockquote { font-weight:${weight} !important; letter-spacing:${ls}px !important; word-spacing:${ws}px !important; }
       body b, body strong, body h1, body h2, body h3 { font-weight:${Math.min(900, weight + 200)} !important; }
       body h1, body h2, body h3 { line-height:1.4 !important; }
@@ -443,12 +481,14 @@ const Reader = (() => {
     const max = Math.max(0, el.scrollHeight - R.layout.H);
     const base = (R.scrollTarget == null) ? el.scrollTop : R.scrollTarget;
     if (dy > 0 && base >= max - 2) {
-      if (R.chapterIndex < R.chapters.length - 1) { R.scrollTarget = null; loadChapter(R.chapterIndex + 1, 0); return; }
+      if (segReady() && lastSegCh() < R.chapters.length - 1) { R.scrollTarget = null; appendChapter(lastSegCh() + 1); return; }
+      if (!segReady() && R.chapterIndex < R.chapters.length - 1) { R.scrollTarget = null; loadChapter(R.chapterIndex + 1, 0); return; }
       smoothScrollTo(max);
       return;
     }
     if (dy < 0 && base <= 2) {
-      if (R.chapterIndex > 0) { R.scrollTarget = null; loadChapter(R.chapterIndex - 1, 999999); return; }
+      if (segReady() && firstSegCh() > 0) { R.scrollTarget = null; prependChapter(firstSegCh() - 1); return; }
+      if (!segReady() && R.chapterIndex > 0) { R.scrollTarget = null; loadChapter(R.chapterIndex - 1, 999999); return; }
       smoothScrollTo(0);
       return;
     }
@@ -472,7 +512,6 @@ const Reader = (() => {
         return;
       }
       el.scrollTop = cur + d * 0.24;
-      updateProgressUi();
       R.scrollRaf = requestAnimationFrame(step);
     };
     R.scrollRaf = requestAnimationFrame(step);
@@ -489,7 +528,6 @@ const Reader = (() => {
       const d = R.scrollTarget - cur;
       if (Math.abs(d) < 0.8) { el.scrollTop = R.scrollTarget; R.scrollRaf = 0; R.scrollTarget = null; updateProgressUi(); return; }
       el.scrollTop = cur + d * 0.28;
-      updateProgressUi();
       R.scrollRaf = requestAnimationFrame(step);
     };
     R.scrollRaf = requestAnimationFrame(step);
@@ -705,8 +743,19 @@ const Reader = (() => {
   function currentOffset() {
     if (!R.doc) return 0;
     if (R.mode === 'scroll') {
-      const range = R.doc.caretRangeFromPoint ? R.doc.caretRangeFromPoint(R.layout.W / 2, ANCHOR_Y) : null;
-      if (range) return offsetOfPoint(range.startContainer, range.startOffset);
+      const sg = segReady() ? anchorSeg() : null;
+      const cw = R.layout.pageW || R.layout.W;
+      const x = Math.max(30, Math.min(R.layout.W - 30, (R.layout.W - cw) / 2 + Math.min(cw, 360)));
+      const range = R.doc.caretRangeFromPoint ? R.doc.caretRangeFromPoint(x, ANCHOR_Y) : null;
+      if (range && R.doc.body.contains(range.startContainer) && (!sg || sg.el.contains(range.startContainer))) {
+        // 取到的点必须就在当前这一章的 section 里，否则（点在段间空白/页边/别的章）按比例估
+        return offsetOfPoint(range.startContainer, range.startOffset);
+      }
+      if (sg) {
+        const r = sg.el.getBoundingClientRect();
+        const f = Math.min(1, Math.max(0, (ANCHOR_Y - r.top) / Math.max(1, r.height)));
+        return sg.start + Math.round(f * sg.len);
+      }
       const { total } = textNodes();
       const frac = R.doc.documentElement.scrollTop / Math.max(1, R.doc.documentElement.scrollHeight - R.layout.H);
       return Math.round(frac * total);
@@ -739,12 +788,18 @@ const Reader = (() => {
     if (!CSSns || !CSSns.highlights) return;
     CSSns.highlights.clear();
     const groups = {};
-    for (const a of annsOfChapter(R.chapterIndex)) {
-      const r = rangeOfOffsets(a.start, a.end);
-      if (!r) continue;
-      const c = a.color || 'yellow';
-      (groups[c] = groups[c] || []).push(r);
-      if (a.note && a.note.trim()) (groups['hl-note'] = groups['hl-note'] || []).push(r.cloneRange());
+    const chapters = segReady() ? R.seg.map((x) => x.ch) : [R.chapterIndex];
+    for (const ch of chapters) {
+      const base = toGlobalOff(ch, 0) - (segReady() ? 0 : 0);
+      for (const a of annsOfChapter(ch)) {
+        const off0 = segReady() ? toGlobalOff(ch, a.start) : a.start;
+        const off1 = segReady() ? toGlobalOff(ch, a.end) : a.end;
+        const r = rangeOfOffsets(off0, off1);
+        if (!r) continue;
+        const c = a.color || 'yellow';
+        (groups[c] = groups[c] || []).push(r);
+        if (a.note && a.note.trim()) (groups['hl-note'] = groups['hl-note'] || []).push(r.cloneRange());
+      }
     }
     for (const [name, ranges] of Object.entries(groups)) {
       try { CSSns.highlights.set(name.startsWith('hl-') ? name : 'hl-' + name, new R.win.Highlight(...ranges)); } catch (e) {}
@@ -759,6 +814,12 @@ const Reader = (() => {
     if (!R.doc) return 0;                       // 章节还没加载完时不要炸
     const n = R.chapters.length || 1;
     if (R.mode === 'scroll') {
+      const sg = anchorSeg();
+      if (sg && sg.el) {
+        const r = sg.el.getBoundingClientRect();
+        const f = Math.min(1, Math.max(0, (ANCHOR_Y - r.top) / Math.max(1, r.height)));
+        return Math.min(1, (sg.ch + f) / n);
+      }
       const doc = R.doc;
       const max = Math.max(1, doc.documentElement.scrollHeight - R.layout.H);
       const f = Math.min(1, Math.max(0, doc.documentElement.scrollTop / max));
@@ -771,10 +832,7 @@ const Reader = (() => {
     const pctv = bookPercent();
     $('#progress').value = Math.round(pctv * 1000);
     if (R.mode === 'scroll') {
-      const doc = R.doc;
-      const max = Math.max(1, doc.documentElement.scrollHeight - R.layout.H);
-      const cur = Math.min(Math.round(doc.documentElement.scrollTop / max * 1000), 1000);
-      $('#rb-pages').textContent = Math.round(cur / 10) + '%';
+      $('#rb-pages').textContent = pct(pctv) + '%';
     } else {
       $('#rb-pages').textContent = (R.page + 1) + ' / ' + R.pages + '  ·  ' + pct(pctv) + '%';
     }
@@ -920,7 +978,8 @@ const Reader = (() => {
   /* ============================ 跳转与返回 ============================ */
   function rememberReturn() {
     if (R.returnLoc) return;         // 连续跳转只记最开始的位置
-    R.returnLoc = { chapter: R.chapterIndex, offset: currentOffset(), page: R.page, mode: R.mode };
+    const rl = toLocalOff(currentOffset());
+    R.returnLoc = { chapter: rl.ch, offset: rl.offset, page: R.page, mode: R.mode };
   }
 
   function showJumpBack(label) {
@@ -935,13 +994,18 @@ const Reader = (() => {
   async function jumpTo(chapter, offset, label) {
     if (!R.ready && !R.chapters.length) return;
     rememberReturn();
-    if (chapter === R.chapterIndex && R.doc) {
-      if (R.mode === 'scroll') scrollToOffset(offset);
-      else goPage(pageOfOffset(offset));
+    const inDoc = segReady() && R.seg.some((x) => x.ch === chapter);
+    if (R.mode === 'scroll' && inDoc) {
+      scrollToOffsetNow(toGlobalOff(chapter, offset));
+      R.chapterIndex = chapter;
+      updateProgressUi();
+    } else if (chapter === R.chapterIndex && R.doc && !segReady()) {
+      goPage(pageOfOffset(offset));
       updateProgressUi();
       flash();
     } else {
       await loadChapter(chapter, offset);
+      if (R.mode === 'paged') flash();
     }
     showJumpBack(label);
     scheduleSave();
@@ -1022,6 +1086,140 @@ const Reader = (() => {
     $('#np-cancel').onclick = hideNotePop;
   }
 
+
+  /* ============ 滚动模式：多章拼进同一个文档，滚起来是连续的 ============ */
+  function segReady() { return !!(R.seg && R.seg.length); }
+
+  function rebuildSeg() {
+    R.seg = [];
+    if (!R.doc || !R.doc.body) return;
+    let acc = 0;
+    R.doc.body.querySelectorAll(':scope > section.lr-seg').forEach((el) => {
+      const ch = Number(el.dataset.ch);
+      const len = el.textContent.length;
+      R.seg.push({ ch, el, start: acc, len });
+      acc += len;
+    });
+  }
+
+  function segOfGlobal(off) {
+    if (!segReady()) return null;
+    for (let i = R.seg.length - 1; i >= 0; i--) if (off >= R.seg[i].start) return R.seg[i];
+    return R.seg[0];
+  }
+  // 文档内全局字符偏移 ↔ (章, 章内偏移)：标注、书签一律按章内偏移存
+  function toLocalOff(off) {
+    const s = segOfGlobal(off);
+    if (!s) return { ch: R.chapterIndex, offset: off };
+    return { ch: s.ch, offset: Math.max(0, Math.min(s.len, off - s.start)) };
+  }
+  function toGlobalOff(ch, local) {
+    if (!segReady()) return local;
+    const s = R.seg.find((x) => x.ch === ch);
+    return s ? s.start + Math.max(0, Math.min(s.len, local || 0)) : local;
+  }
+  function firstSegCh() { return segReady() ? R.seg[0].ch : R.chapterIndex; }
+  function lastSegCh() { return segReady() ? R.seg[R.seg.length - 1].ch : R.chapterIndex; }
+
+  function anchorSeg() {
+    if (!segReady()) return null;
+    for (const s of R.seg) {
+      const r = s.el.getBoundingClientRect();
+      if (r.bottom > ANCHOR_Y) return s;
+    }
+    return R.seg[R.seg.length - 1];
+  }
+
+  function wrapSeg(ch) {
+    const body = R.doc.body;
+    if (body.querySelector(':scope > section.lr-seg')) { rebuildSeg(); return; }
+    const sec = R.doc.createElement('section');
+    sec.className = 'lr-seg';
+    sec.dataset.ch = String(ch);
+    while (body.firstChild) sec.appendChild(body.firstChild);
+    body.appendChild(sec);
+    rebuildSeg();
+  }
+
+  // 章节自带 <style>/<link> 要搬过来，否则拼进来的章节没有字体和图片样式
+  function copyChapterStyles(d2) {
+    d2.querySelectorAll('style, link[rel="stylesheet"]').forEach((n) => {
+      const key = n.tagName === 'LINK' ? (n.getAttribute('href') || '') : ('inline:' + (n.textContent || '').slice(0, 80));
+      if (!key) return;
+      const exist = [...R.doc.querySelectorAll('style, link[rel="stylesheet"]')].some((m) => {
+        const k2 = m.tagName === 'LINK' ? (m.getAttribute('href') || '') : ('inline:' + (m.textContent || '').slice(0, 80));
+        return k2 === key;
+      });
+      if (exist) return;
+      const c = n.cloneNode(true);
+      if (c.tagName === 'STYLE') c.setAttribute('data-lr-ch', '1');
+      R.doc.head.appendChild(c);
+    });
+  }
+
+  async function fetchChapterNode(ch) {
+    const res = await fetch(chapterUrl(ch));
+    const html = await res.text();
+    const d2 = new DOMParser().parseFromString(html, 'text/html');
+    copyChapterStyles(d2);
+    const sec = R.doc.createElement('section');
+    sec.className = 'lr-seg';
+    sec.dataset.ch = String(ch);
+    const frag = R.doc.importNode(d2.body, true);
+    while (frag.firstChild) sec.appendChild(frag.firstChild);
+    return sec;
+  }
+
+  async function appendChapter(ch) {
+    if (!R.id || !R.doc || ch == null || ch < 0 || ch >= (R.chapters || []).length) return false;
+    if (R.seg.some((s) => s.ch === ch)) return false;
+    if (R._segBusy) return false;
+    R._segBusy = true;
+    const docRef = R.doc;
+    try {
+      const sec = await fetchChapterNode(ch);
+      if (R.doc !== docRef) return false;
+      docRef.body.appendChild(sec);
+      rebuildSeg();
+      applyHighlights();
+      updateProgressUi();
+      return true;
+    } catch (e) { return false; }
+    finally { R._segBusy = false; }
+  }
+
+  async function prependChapter(ch) {
+    if (!R.id || !R.doc || ch == null || ch < 0 || ch >= (R.chapters || []).length) return false;
+    if (R.seg.some((s) => s.ch === ch)) return false;
+    if (R._segBusy) return false;
+    R._segBusy = true;
+    const docRef = R.doc;
+    try {
+      const sec = await fetchChapterNode(ch);
+      if (R.doc !== docRef) return false;
+      const el = docRef.documentElement;
+      const before = el.scrollHeight;
+      docRef.body.insertBefore(sec, docRef.body.firstChild);
+      rebuildSeg();
+      el.scrollTop += Math.max(0, el.scrollHeight - before);
+      applyHighlights();
+      return true;
+    } catch (e) { return false; }
+    finally { R._segBusy = false; }
+  }
+
+  function scrollToOffsetNow(off) {
+    const pt = pointOfOffset(off);
+    if (!pt) return;
+    try {
+      const r = R.doc.createRange();
+      r.setStart(pt.node, pt.offset); r.setEnd(pt.node, pt.offset);
+      const el = R.doc.documentElement;
+      el.scrollTop = el.scrollTop + r.getBoundingClientRect().top - ANCHOR_Y;
+      R.scrollTarget = null;
+    } catch (e) {}
+  }
+
   /* ============================ iframe 事件 ============================ */
   function bindFrameEvents() {
     const doc = R.doc, win = R.win;
@@ -1036,19 +1234,15 @@ const Reader = (() => {
         if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); turn(e.deltaY > 0 ? 1 : -1); }
         return;
       }
-      // 滚动模式：接管滚轮做逐帧平滑位移（鼠标一格 = 80% 视图高，触控板小步长按比例）
+      // 滚动模式：滚轮交给浏览器原生滚动（GPU 合成，最顺），只在章节首尾接管
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? R.layout.H : 1;
       const dy = e.deltaY * unit;
-      if (!smoothOn()) {
-        // 关掉平滑时用原生滚动，只在章节边界接管，否则会卡在本章末尾
-        const el = R.doc.documentElement;
-        const atBottom = el.scrollTop + R.layout.H >= el.scrollHeight - 2;
-        const atTop = el.scrollTop <= 2;
-        if ((dy > 0 && atBottom) || (dy < 0 && atTop)) { e.preventDefault(); scrollStep(dy); }
-        return;
-      }
-      e.preventDefault();
-      scrollStep(dy);
+      const el = R.doc.documentElement;
+      const atBottom = el.scrollTop + R.layout.H >= el.scrollHeight - 2;
+      const atTop = el.scrollTop <= 2;
+      const needNext = dy > 0 && atBottom && R.chapterIndex < R.chapters.length - 1;
+      const needPrev = dy < 0 && atTop && R.chapterIndex > 0;
+      if (needNext || needPrev) { e.preventDefault(); scrollStep(dy); }
     }, { passive: false });
     doc.addEventListener('keydown', (e) => {
       if (R.mode !== 'paged') return;
@@ -1060,6 +1254,17 @@ const Reader = (() => {
   let wheelLock = 0;
   function onScroll() {
     if (R.mode !== 'scroll') return;
+    if (segReady() && R.doc) {
+      const sg = anchorSeg();
+      if (sg && sg.ch !== R.chapterIndex) {
+        R.chapterIndex = sg.ch;
+        updateHeader();
+      }
+      const el = R.doc.documentElement;
+      const remain = el.scrollHeight - el.scrollTop - R.layout.H;
+      if (remain < R.layout.H * 2.5) appendChapter(lastSegCh() + 1);
+      if (el.scrollTop < R.layout.H * 1.5) prependChapter(firstSegCh() - 1);
+    }
     updateProgressUi();
     scheduleSave();
   }
@@ -1087,16 +1292,19 @@ const Reader = (() => {
     const range = R.doc.caretRangeFromPoint ? R.doc.caretRangeFromPoint(e.clientX, e.clientY) : null;
     if (!range) return;
     const off = offsetOfPoint(range.startContainer, range.startOffset);
-    const hit = annsOfChapter(R.chapterIndex).find((a) => off >= a.start && off <= a.end);
+    const loc0 = toLocalOff(off);
+    const hit = annsOfChapter(loc0.ch).find((a) => loc0.offset >= a.start && loc0.offset <= a.end);
     if (hit) showNotePop(e.clientX, e.clientY, hit);
     else hideNotePop();
   }
 
   function addAnn(color) {
     if (!R.selOffsets) return;
+    const loc1 = toLocalOff(R.selOffsets.start);
+    const span1 = R.selOffsets.end - R.selOffsets.start;
     const a = {
-      id: uid('a'), chapter: R.chapterIndex,
-      start: R.selOffsets.start, end: R.selOffsets.end,
+      id: uid('a'), chapter: loc1.ch,
+      start: loc1.offset, end: loc1.offset + span1,
       text: R.selOffsets.text, color, note: '',
       createdAt: Date.now(), updatedAt: Date.now()
     };
@@ -1111,9 +1319,11 @@ const Reader = (() => {
 
   function addNoteFromSelection() {
     if (!R.selOffsets) return;
+    const loc2 = toLocalOff(R.selOffsets.start);
+    const span2 = R.selOffsets.end - R.selOffsets.start;
     const a = {
-      id: uid('a'), chapter: R.chapterIndex,
-      start: R.selOffsets.start, end: R.selOffsets.end,
+      id: uid('a'), chapter: loc2.ch,
+      start: loc2.offset, end: loc2.offset + span2,
       text: R.selOffsets.text, color: 'yellow', note: '',
       createdAt: Date.now(), updatedAt: Date.now()
     };
@@ -1152,23 +1362,18 @@ const Reader = (() => {
     syncSettingsUi(document);
   }
 
-  function setMode(mode) {
+  async function setMode(mode) {
     if (mode === R.mode) return;
-    const off = currentOffset();
+    const loc = toLocalOff(currentOffset());
     R.mode = mode;
     S.settings.mode = mode;
     api.saveDoc('settings', S.settings);
     applyModeUi();
     if (!R.doc) return;
-    layout();
-    if (mode === 'scroll') {
-      scrollToOffset(off);
-      updateProgressUi();
-    } else {
-      applyHighlights();
-      goPage(pageOfOffset(off));
-      updateProgressUi();
-    }
+    // 滚动模式要把相邻章节拼进同一个文档，翻页模式回到单章，所以都按目标模式重建
+    if (mode === 'scroll') await loadScroll(loc.ch, loc.offset);
+    else await loadPageChapter(loc.ch, loc.offset);
+    updateProgressUi();
     scheduleSave();
   }
 
@@ -1239,7 +1444,8 @@ const Reader = (() => {
   async function toggleBookmark() {
     if (!R.ready) return;
     const off = currentOffset();
-    const exist = R.ann.bookmarks.find((b) => b.chapter === R.chapterIndex && Math.abs(b.offset - off) < 400);
+    const bloc = toLocalOff(off);
+    const exist = R.ann.bookmarks.find((b) => b.chapter === bloc.ch && Math.abs(b.offset - bloc.offset) < 400);
     if (exist) {
       R.ann.bookmarks = R.ann.bookmarks.filter((b) => b.id !== exist.id);
       await saveAnnotations();
@@ -1247,8 +1453,8 @@ const Reader = (() => {
     } else {
       const snippet = (textOfOffset(off) || '').slice(0, 80);
       R.ann.bookmarks.push({
-        id: uid('m'), chapter: R.chapterIndex, offset: off, page: R.page,
-        label: chapterTitle(R.chapterIndex), snippet,
+        id: uid('m'), chapter: bloc.ch, offset: bloc.offset, page: R.page,
+        label: chapterTitle(bloc.ch), snippet,
         createdAt: Date.now(), updatedAt: Date.now()
       });
       await saveAnnotations();
@@ -1314,7 +1520,8 @@ const Reader = (() => {
   }
 
   function locationNow() {
-    return { chapter: R.chapterIndex, offset: currentOffset(), page: R.page };
+    const loc = toLocalOff(currentOffset());
+    return { chapter: loc.ch, offset: loc.offset, page: R.page };
   }
 
   function nextChapter() {
@@ -1325,6 +1532,7 @@ const Reader = (() => {
 
   /* ============================ 事件绑定 ============================ */
   function init() {
+    bindStageResize();
     $('#btn-back-lib').onclick = () => close();
     $('#zone-prev').onclick = () => turn(-1);
     $('#zone-next').onclick = () => turn(1);
@@ -1572,6 +1780,8 @@ const Reader = (() => {
   /* ==================== 左侧栏：目录 / 书签 / 高亮标记 ==================== */
   let sideTab = 'toc';
   function setSide(tab, force) {
+    bindSideTransition();
+    bindStageResize();
     const side = $('#rd-side');
     if (!side) return;
     const isOpen = side.classList.contains('open');
@@ -1593,11 +1803,39 @@ const Reader = (() => {
     const s = $('#rd-side');
     if (s) { s.classList.remove('open'); relayoutSoon(); }
   }
+  // 侧栏展开动画结束就立刻重排，不用等定时器
+  /* 侧栏开合 / 窗口缩放时，正文要跟着实时重新居中，所以监听舞台尺寸而不是只在动画结束后量一次 */
+  let _stageRO = null, _stageRaf = 0;
+  function bindStageResize() {
+    const el = $('#book-frame');
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    if (_stageRO) _stageRO.disconnect();
+    _stageRO = new ResizeObserver(() => {
+      if (_stageRaf) return;
+      _stageRaf = requestAnimationFrame(() => {
+        _stageRaf = 0;
+        if (R.doc && R.ready) layout();
+      });
+    });
+    _stageRO.observe(el);
+  }
+
+  function bindSideTransition() {
+    const side = $('#rd-side');
+    if (!side || side._relayoutBound) return;
+    side._relayoutBound = true;
+    side.addEventListener('transitionend', (e) => {
+      if (e.propertyName === 'margin-left' && R.doc && R.ready) applySettings();
+    });
+  }
+
   function relayoutSoon() {
     clearTimeout(relayoutSoon._t);
-    relayoutSoon._t = setTimeout(() => {
-      if (R.doc && S.settings.mode === 'paged') applySettings();
-    }, 240);
+    clearTimeout(relayoutSoon._t2);
+    const run = () => { if (R.doc && R.ready) applySettings(); };
+    // 侧栏有 220ms 的展开动画，等动画结束再量宽度，才能按最终尺寸居中
+    relayoutSoon._t = setTimeout(run, 260);
+    relayoutSoon._t2 = setTimeout(run, 520);
   }
   function togglePanel(id) {
     const el = document.getElementById(id);
