@@ -15,7 +15,8 @@ const RENDERER = path.join(APP_ROOT, 'src', 'renderer');
 const VERSION = require(path.join(APP_ROOT, 'package.json')).version;
 
 store.ensureDirs();
-app.setPath('userData', path.join(store.DATA_DIR, 'profile'));
+// 开发/调试时可以用 LR_PROFILE 指向单独的 profile，避免和已安装的实例抢单实例锁
+app.setPath('userData', process.env.LR_PROFILE || path.join(store.DATA_DIR, 'profile'));
 app.setName('LinuxReader');
 
 protocol.registerSchemesAsPrivileged([{

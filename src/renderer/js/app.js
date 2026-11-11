@@ -35,6 +35,8 @@ const App = (() => {
     Reader.init();
     bindChrome();
     Library.render();
+    // 老书可能还没有封面（早期版本不认首屏整页图），后台补一遍
+    setTimeout(() => { if (typeof Library.rescanCovers === 'function') Library.rescanCovers(); }, 1200);
     updateSyncDot(S.sync.lastSync ? 'on' : '');
     scheduleAutoSync();
 

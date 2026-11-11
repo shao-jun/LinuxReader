@@ -60,6 +60,51 @@ const Reader = (() => {
     return 'linuxreader://local/book/' + id + '/src/' + rel.split('/').map(encodeURIComponent).join('/');
   }
 
+  /**
+   * 首屏如果是一整页图片（扫描封面、自制封面经常这么放：一个只有 <img> 的 xhtml，
+   * 或者 <svg> 里裹一张 <image>），就把这张图取出来当封面，别让书库里显示占位色块。
+   */
+  function imageOfPage(doc, baseDir) {
+    const imgs = [];
+    for (const el of findAny(doc, ['img', 'image'])) {
+      const src = el.getAttribute('src') || el.getAttribute('xlink:href')
+        || el.getAttributeNS && el.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+      if (!src) continue;
+      if (/^data:/i.test(src)) { imgs.push({ src, data: true }); continue; }
+      if (/^(https?:)?\/\//i.test(src)) continue;
+      imgs.push({ src: resolveUrl(baseDir, src), data: false });
+    }
+    return imgs;
+  }
+
+  function findAny(root, names) {
+    const out = [];
+    const all = root.getElementsByTagName('*');
+    for (let i = 0; i < all.length; i++) {
+      const n = (all[i].localName || '').toLowerCase();
+      if (names.includes(n)) out.push(all[i]);
+    }
+    return out;
+  }
+
+  async function coverFromFirstPage(id, spineItems) {
+    const order = spineItems || [];
+    for (const item of order.slice(0, 2)) {
+      try {
+        const doc = parseXml(await fetchText(srcUrl(id, item.href)));
+        const body = first(doc, 'body') || doc.documentElement;
+        if (!body) continue;
+        // 页面上还有成段正文，就不是纯封面页
+        const words = textOf(body).replace(/\s/g, '');
+        if (words.length > 140) continue;
+        const imgs = imageOfPage(doc, item.href.includes('/') ? item.href.slice(0, item.href.lastIndexOf('/')) : '');
+        if (!imgs.length) continue;
+        return imgs[0].src;
+      } catch (e) { /* 换下一章试试 */ }
+    }
+    return '';
+  }
+
   /** 解析 EPUB 结构（container.xml → OPF → 目录），返回可写入 meta.json 的对象 */
   async function parseStructure(id) {
     const container = parseXml(await fetchText(srcUrl(id, 'META-INF/container.xml')));
@@ -94,6 +139,7 @@ const Reader = (() => {
       if (!/html|xml/.test(it.type) && !/\.x?html?$/i.test(it.href)) continue;
       spine.push({ href: it.href, id: ref.getAttribute('idref'), linear: ref.getAttribute('linear') !== 'no' });
     }
+    const allSpine = spine.slice();
     // 封面页通常 linear="no"，不参与正文顺序（封面仍由 cover 字段提供）
     const linearSpine = spine.filter((s) => s.linear);
     if (linearSpine.length) { spine.length = 0; linearSpine.forEach((s) => spine.push(s)); }
@@ -101,6 +147,7 @@ const Reader = (() => {
 
     // 封面
     let cover = '';
+    let coverData = '';
     const metaCover = findAll(metaEls, 'meta').find((m) => (m.getAttribute('name') || '') === 'cover');
     if (metaCover && manifest[metaCover.getAttribute('content')]) cover = manifest[metaCover.getAttribute('content')].href;
     if (!cover) {
@@ -110,6 +157,13 @@ const Reader = (() => {
     if (!cover) {
       const guess = Object.values(manifest).find((m) => /^image\//.test(m.type) && /cover/i.test(m.href));
       if (guess) cover = guess.href;
+    }
+    if (!cover) {
+      const fromPage = await coverFromFirstPage(id, allSpine);
+      if (fromPage) {
+        if (/^data:/i.test(fromPage)) { cover = ''; coverData = fromPage; }
+        else cover = fromPage;
+      }
     }
 
     // 目录：优先 EPUB3 nav，回落 NCX
@@ -172,7 +226,7 @@ const Reader = (() => {
 
     return {
       id, type: 'epub', title, author, language, publisher, description, identifier,
-      cover: cover ? resolveUrl('', cover) : '', opfPath, spine, toc,
+      cover: cover ? resolveUrl('', cover) : '', coverData, opfPath, spine, toc,
       chapterCount: spine.length
     };
   }

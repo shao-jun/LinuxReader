@@ -22,12 +22,25 @@ ok('书库有书卡', cards >= 1, cards)
 # 2 打开书
 s.eval("(()=>{const c=document.querySelector('#book-grid .book-card'); c.click(); return 1})()")
 time.sleep(3)
-s.eval("Reader.jumpTo(0, 0, 'test')")
-time.sleep(1.5)
+# 第一章常常是封面/扉页（几乎没有字），挑中间一个正文章节来验证排版和翻页
+def wait_true(expr, timeout=20, step=0.4):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if s.eval(expr):
+                return True
+        except Exception:
+            pass
+        time.sleep(step)
+    return False
+
+s.eval("(async()=>{const n=Reader._dev.R.chapters.length; await Reader.jumpTo(Math.max(1, Math.floor(n/2)), 0); return 1})()")
+wait_true("Reader.doc && Reader.doc.body.innerText.trim().length > 100", 25)
 opened = s.eval("Reader.ready && document.querySelector('#view-reader').classList.contains('active')")
 ok('打开书籍', bool(opened))
 ok('书籍正文有内容', s.eval("Reader.doc ? Reader.doc.body.innerText.trim().length : 0") > 100,
    s.eval("Reader.doc ? Reader.doc.body.innerText.trim().length : 0"))
+ok('正文按页切分', s.eval("Reader._dev.R.pages") >= 1, s.eval("Reader._dev.R.pages"))
 
 # 3 左侧三 tab
 tabs = s.eval("[...document.querySelectorAll('#rd-tabs button')].map(b=>b.textContent.trim()+':'+b.classList.contains('on'))")
@@ -106,7 +119,8 @@ p1 = s.eval("Reader.doc.documentElement.scrollLeft")
 ok('淡入淡出可翻页', p1 >= p0, '%s -> %s' % (p0, p1))
 s.eval("document.querySelector('#aa-body [data-tc=transition][data-v=page]').click(); Reader.turn(1)")
 time.sleep(0.7)
-ok('翻页动效可翻页', s.eval("Reader.doc.documentElement.scrollLeft") != p1)
+ok('翻页动效可翻页', s.eval("Reader.doc.documentElement.scrollLeft") != p1,
+   '%s -> %s' % (p1, s.eval("Reader.doc.documentElement.scrollLeft")))
 s.eval("document.querySelector('#aa-body [data-tc=transition][data-v=scroll]').click()")
 time.sleep(0.9)
 ok('滚动模式', s.eval("S.settings.mode") == 'scroll' and s.eval("S.settings.transition") == 'scroll')

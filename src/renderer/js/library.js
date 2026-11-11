@@ -41,6 +41,7 @@ const Library = (() => {
   }
 
   function coverUrl(book) {
+    if (book.coverData) return book.coverData;
     if (!book.cover) return '';
     return 'linuxreader://local/book/' + book.id + '/src/' + String(book.cover).split('/').map(encodeURIComponent).join('/');
   }
@@ -252,22 +253,61 @@ const Library = (() => {
       const parsed = await Reader.parseStructure(id);
       Object.assign(meta, parsed);
       await api.saveMeta(id, meta);
-      const b = books().find((x) => x.id === id);
+      // 刚导入的书可能还没进内存里的书库（主进程刚写完 library.json），先重新读一次
+      let b = books().find((x) => x.id === id);
+      if (!b) { await reloadLibrary(); b = books().find((x) => x.id === id); }
       if (b) {
         b.title = parsed.title || b.title;
         b.author = parsed.author || '';
         b.cover = parsed.cover || '';
+        b.coverData = parsed.coverData || '';
         b.language = parsed.language || '';
         b.chapters = parsed.chapterCount || 0;
+        await api.saveDoc('library', S.library);
       }
     } catch (e) {
       toast('解析《' + id + '》失败：' + e.message, 4000);
     }
   }
 
+
+  /* 老书补封面：早期导入的书记录里没有 cover，这里在后台重解析一遍首屏图片 */
+  let rescanDone = false;
+  async function rescanCovers() {
+    if (rescanDone) return;
+    rescanDone = true;
+    const targets = books().filter((b) => b.type === 'epub' && !b.cover && !b.coverData && !b.coverScanned);
+    if (!targets.length) return;
+    let changed = 0;
+    for (const b of targets) {
+      try {
+        await parseAndSave(b.id);
+        const nb = books().find((x) => x.id === b.id);
+        if (nb) {
+          nb.coverScanned = true;
+          if (nb.cover || nb.coverData) changed++;
+        }
+        const meta = await api.meta(b.id);
+        if (meta) { meta.coverScanned = true; await api.saveMeta(b.id, meta); }
+      } catch (e) { /* 解析失败就跳过这本书 */ }
+    }
+    if (changed) { await api.saveDoc('library', S.library); render(); }
+  }
+
   async function reloadLibrary() {
     const lib = await api.loadDoc('library');
-    if (lib) S.library = lib;
+    if (lib) {
+      const prev = new Map(books().map((b) => [b.id, b]));
+      lib.books = lib.books || [];
+      for (const b of lib.books) {
+        const old = prev.get(b.id);
+        if (!old) continue;
+        for (const k of ['title', 'author', 'cover', 'coverData', 'language', 'chapters']) {
+          if (!b[k] && old[k]) b[k] = old[k];
+        }
+      }
+      S.library = lib;
+    }
     S.library.books = S.library.books || [];
     S.library.collections = S.library.collections || [];
     await api.saveDoc('library', S.library);
@@ -304,5 +344,5 @@ const Library = (() => {
     });
   }
 
-  return { init, render, open, reload: reloadLibrary, parseAndSave, toggleFavorite, remove, visibleBooks, handleImportResult, collectionMenu: null };
+  return { init, render, open, reload: reloadLibrary, parseAndSave, rescanCovers, toggleFavorite, remove, visibleBooks, handleImportResult, collectionMenu: null };
 })();
