@@ -7,7 +7,7 @@ seamless scrolling, and sync of books and annotations to your own cloud (WebDAV)
 
 **English** | [简体中文](README.md)
 
-- Prebuilt deb: [`dist/linuxreader_1.0.7_amd64.deb`](dist/linuxreader_1.0.7_amd64.deb) (~68 MB, bundles the Electron runtime — install and run)
+- Prebuilt deb: [`dist/linuxreader_1.0.8_amd64.deb`](dist/linuxreader_1.0.8_amd64.deb) (~68 MB, bundles the Electron runtime — install and run)
 - Project: <https://github.com/shao-jun/LinuxReader>
 - License: MIT © 2026 ftosoft
 
@@ -16,7 +16,7 @@ seamless scrolling, and sync of books and annotations to your own cloud (WebDAV)
 Download the deb from this repo (or build it yourself with `./build/build-deb.sh`), then:
 
 ```bash
-sudo dpkg -i linuxreader_1.0.7_amd64.deb     # if dependencies are missing: sudo apt -f install
+sudo dpkg -i linuxreader_1.0.8_amd64.deb     # if dependencies are missing: sudo apt -f install
 ```
 
 After installation **LinuxReader** appears in the application menu and `.epub` files open in it by default

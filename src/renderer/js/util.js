@@ -17,7 +17,7 @@ const S = {
   tts: null,
   shelf: 'all', collectionId: null, viewMode: 'grid', sort: 'recent', search: '', tag: null,
   book: null,
-  version: '1.0.7',
+  version: '1.0.8',
   home: ''
 };
 

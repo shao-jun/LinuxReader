@@ -1087,7 +1087,7 @@ const Reader = (() => {
     if (R.navStack.length) showJumpBack('上一个位置'); else hideJumpBack();
     const inDoc = segReady() && R.seg.some((x) => x.ch === loc.chapter);
     if (R.mode === 'scroll' && inDoc) {
-      if (!loc.offset || !scrollToChapterStart(loc.chapter)) scrollToOffsetNow(toGlobalOff(loc.chapter, loc.offset));
+      if (loc.offset > 40 || !scrollToChapterStart(loc.chapter)) scrollToOffsetNow(toGlobalOff(loc.chapter, loc.offset));
       R.chapterIndex = loc.chapter;
       updateHeader();
       updateProgressUi();

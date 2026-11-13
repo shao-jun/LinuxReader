@@ -6,7 +6,7 @@ Linux 桌面的电子书阅读器，EPUB 与 PDF，做得像 Apple 图书那样�
 可微调的排版、四色高亮与笔记、左侧目录/书签/高亮三栏、歌词式跟读、平滑滚动，
 书籍与笔记可以用你自己的云盘（WebDAV）或本地目录同步。
 
-- 打包好的 deb：[`dist/linuxreader_1.0.7_amd64.deb`](dist/linuxreader_1.0.7_amd64.deb)（约 68MB，自带 Electron 运行时，装完即用）
+- 打包好的 deb：[`dist/linuxreader_1.0.8_amd64.deb`](dist/linuxreader_1.0.8_amd64.deb)（约 68MB，自带 Electron 运行时，装完即用）
 - 项目地址：<https://github.com/shao-jun/LinuxReader>
 - 许可证：MIT © 2026 ftosoft
 
@@ -15,7 +15,7 @@ Linux 桌面的电子书阅读器，EPUB 与 PDF，做得像 Apple 图书那样�
 从仓库里下载 deb（或自己跑 `./build/build-deb.sh` 生成），然后：
 
 ```bash
-sudo dpkg -i linuxreader_1.0.7_amd64.deb     # 依赖报错时补 sudo apt -f install
+sudo dpkg -i linuxreader_1.0.8_amd64.deb     # 依赖报错时补 sudo apt -f install
 ```
 
 装完后应用菜单里出现 **LinuxReader**，`.epub` 双击默认用它打开
