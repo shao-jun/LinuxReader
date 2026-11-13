@@ -10,7 +10,7 @@ const Reader = (() => {
     chapters: [], toc: [], spineHrefs: [],
     layout: { W: 0, H: 0, pad: 0, pageW: 0 },
     nodes: null, nodesToken: -1,
-    returnLoc: null, selRange: null, selOffsets: null, seg: [],
+    returnLoc: null, navStack: [], selRange: null, selOffsets: null, seg: [],
     textCache: new Map(), searchIndex: null,
     saveTimer: null, resizeTimer: null, openedAt: 0
   };
@@ -250,6 +250,7 @@ const Reader = (() => {
     R.nodes = null;
     R.nodesToken = -1;
     R.returnLoc = null;
+    R.navStack = [];
     R.mode = S.settings.mode || 'paged';
     R.openedAt = Date.now();
 
@@ -346,7 +347,8 @@ const Reader = (() => {
     layout();
     applyHighlights();
     const sEl0 = scEl(); if (sEl0) sEl0.scrollTop = 0;
-    if (offset) scrollToOffsetNow(toGlobalOff(index, offset));
+    if (offset && offset > 40) scrollToOffsetNow(toGlobalOff(index, offset));
+    else scrollToChapterStart(index);   // 章首：第一次就要贴在顶上，别等用户再点一次
     bindFrameEvents();
     updateHeader();
     updateProgressUi();
@@ -959,7 +961,7 @@ const Reader = (() => {
     $$('#toc-list .toc-item').forEach((b) => {
       b.onclick = () => {
         const ch = Number(b.dataset.ch);
-        jumpTo(ch, 0, '目录：' + b.querySelector('.toc-label').textContent);
+        jumpTo(ch, 0, '目录：' + b.querySelector('.toc-label').textContent, { fresh: true });
       };
     });
     updateHeader();
@@ -980,7 +982,7 @@ const Reader = (() => {
       card.onclick = (e) => {
         if (e.target.dataset.del) return;
         const b = R.ann.bookmarks.find((x) => x.id === card.dataset.id);
-        if (b) { jumpTo(b.chapter, b.offset, '书签'); }
+        if (b) { jumpTo(b.chapter, b.offset, '书签', { fresh: true }); }
       };
     });
     $$('#bookmark-list [data-del]').forEach((btn) => {
@@ -1016,7 +1018,7 @@ const Reader = (() => {
       card.onclick = (e) => {
         if (e.target.dataset.del) return;
         const a = R.ann.items.find((x) => x.id === card.dataset.id);
-        if (a) { jumpTo(a.chapter, a.start, '笔记：' + (a.note || a.text || '').slice(0, 18)); }
+        if (a) { jumpTo(a.chapter, a.start, '笔记：' + (a.note || a.text || '').slice(0, 18), { fresh: true }); }
       };
     });
     $$('#notes-list [data-del]').forEach((btn) => {
@@ -1036,28 +1038,36 @@ const Reader = (() => {
   }
 
   /* ============================ 跳转与返回 ============================ */
+  /* 跳转栈：每次跳转前把当前位置压栈，可以一路返回到最早的位置（和 Apple 图书一样） */
   function rememberReturn() {
-    if (R.returnLoc) return;         // 连续跳转只记最开始的位置
     const rl = toLocalOff(currentOffset());
-    R.returnLoc = { chapter: rl.ch, offset: rl.offset, page: R.page, mode: R.mode };
+    const off = rl.offset <= 40 ? 0 : rl.offset;
+    const top = R.navStack[R.navStack.length - 1];
+    if (top && top.chapter === rl.ch && Math.abs(top.offset - off) < 40) return;   // 同一位置不重复压栈
+    R.navStack.push({ chapter: rl.ch, offset: off, page: R.page, mode: R.mode });
+    if (R.navStack.length > 40) R.navStack.shift();
   }
 
   function showJumpBack(label) {
     const el = $('#jump-back');
-    el.textContent = '← 返回阅读位置';
+    el.textContent = R.navStack.length > 1 ? '← 返回阅读位置 (' + R.navStack.length + ')' : '← 返回阅读位置';
     el.classList.remove('hidden');
     el.title = label || '';
     clearTimeout(el._t);
+    // 和 Apple 图书一样：按钮过几秒自己淡出，跳转栈还在，再跳一次就会重新露出来
+    el._t = setTimeout(() => { el.classList.add('hidden'); }, 8000);
   }
   function hideJumpBack() { $('#jump-back').classList.add('hidden'); }
 
-  async function jumpTo(chapter, offset, label) {
+  async function jumpTo(chapter, offset, label, opts) {
     if (!R.ready && !R.chapters.length) return;
     rememberReturn();
     const inDoc = segReady() && R.seg.some((x) => x.ch === chapter);
     if (R.mode === 'scroll' && inDoc) {
-      scrollToOffsetNow(toGlobalOff(chapter, offset));
+      if (offset > 0) scrollToOffsetNow(toGlobalOff(chapter, offset));
+      else if (!scrollToChapterStart(chapter)) scrollToOffsetNow(toGlobalOff(chapter, 0));
       R.chapterIndex = chapter;
+      updateHeader();
       updateProgressUi();
     } else if (chapter === R.chapterIndex && R.doc && !segReady()) {
       goPage(pageOfOffset(offset));
@@ -1072,12 +1082,17 @@ const Reader = (() => {
   }
 
   function returnToPrevious() {
-    if (!R.returnLoc) return;
-    const loc = R.returnLoc;
-    R.returnLoc = null;
-    hideJumpBack();
-    if (loc.chapter === R.chapterIndex && R.doc) {
-      if (R.mode === 'scroll') scrollToOffset(loc.offset); else goPage(loc.page);
+    const loc = R.navStack.pop();
+    if (!loc) { hideJumpBack(); return; }
+    if (R.navStack.length) showJumpBack('上一个位置'); else hideJumpBack();
+    const inDoc = segReady() && R.seg.some((x) => x.ch === loc.chapter);
+    if (R.mode === 'scroll' && inDoc) {
+      if (!loc.offset || !scrollToChapterStart(loc.chapter)) scrollToOffsetNow(toGlobalOff(loc.chapter, loc.offset));
+      R.chapterIndex = loc.chapter;
+      updateHeader();
+      updateProgressUi();
+    } else if (R.mode === 'paged' && loc.chapter === R.chapterIndex && R.doc) {
+      goPage(loc.page);
       updateProgressUi();
       flash();
     } else {
@@ -1239,7 +1254,9 @@ const Reader = (() => {
     try {
       const sec = await fetchChapterNode(ch);
       if (R.doc !== docRef) return false;
+      neutralizeLinks(sec);
       docRef.body.appendChild(sec);
+      R.nodes = null; R.nodesToken = -1;
       rebuildSeg();
       applyHighlights();
       updateProgressUi();
@@ -1259,7 +1276,9 @@ const Reader = (() => {
       if (R.doc !== docRef) return false;
       const el = scEl(docRef);
       const before = el.scrollHeight;
+      neutralizeLinks(sec);
       docRef.body.insertBefore(sec, docRef.body.firstChild);
+      R.nodes = null; R.nodesToken = -1;
       rebuildSeg();
       el.scrollTop += Math.max(0, el.scrollHeight - before);
       applyHighlights();
@@ -1268,7 +1287,88 @@ const Reader = (() => {
     finally { R._segBusy = false; }
   }
 
-  function scrollToOffsetNow(off) {
+  /* 图片/字体会在跳转之后才撑开高度，落点会漂几十像素；这里补一次校正 */
+  let _settleT = 0, _settleRaf = 0;
+  function settle(fn) {
+    clearTimeout(_settleT);
+    if (_settleRaf) cancelAnimationFrame(_settleRaf);
+    _settleRaf = requestAnimationFrame(() => { try { fn(); } catch (e) {} });
+    _settleT = setTimeout(() => { try { fn(); } catch (e) {} }, 300);
+  }
+
+  function placeChapterStart(ch) {
+    const sg = R.seg.find((x) => x.ch === ch);
+    if (!sg || !sg.el) return false;
+    const el = scEl();
+    if (!el) return false;
+    el.scrollTop += sg.el.getBoundingClientRect().top - 18;
+    R.scrollTarget = null;
+    return true;
+  }
+
+  /* 跳到某一章开头：把这一章的 section 顶到视口顶部，且补一次校正，避免反复微调 */
+  function scrollToChapterStart(ch) {
+    if (!placeChapterStart(ch)) return false;
+    settle(() => { if (R.doc && R.mode === 'scroll') placeChapterStart(ch); });
+    return true;
+  }
+
+  /* 书内链接 / 脚注：href 解析成「第几章 + 页内锚点」 */
+  function chapterIndexOfHref(href) {
+    const cur = R.chapters[R.chapterIndex] || {};
+    const dir = cur.href && cur.href.includes('/') ? cur.href.slice(0, cur.href.lastIndexOf('/')) : '';
+    const raw = href.split('#')[0];
+    const frag = href.includes('#') ? href.slice(href.indexOf('#') + 1) : '';
+    if (!raw) return { ch: R.chapterIndex, frag };
+    const target = resolveUrl(dir, raw);
+    let idx = R.chapters.findIndex((c) => c.href === target);
+    if (idx < 0) idx = R.chapters.findIndex((c) => c.href.endsWith('/' + target) || target.endsWith('/' + c.href));
+    if (idx < 0) {
+      const file = target.split('/').pop();
+      idx = R.chapters.findIndex((c) => c.href.split('/').pop().split('#')[0] === file);
+    }
+    return { ch: idx, frag };
+  }
+
+  async function jumpToAnchor(ch, frag) {
+    if (ch < 0 || ch >= R.chapters.length) return false;
+    rememberReturn();   // 正文链接：保留当前返回链，连点多次仍回到最初阅读位置
+    const inDoc = segReady() && R.seg.some((x) => x.ch === ch);
+    if (!inDoc) await loadChapter(ch, 0);
+    else if (R.mode === 'scroll') { /* 已在同一文档里，直接用 */ }
+    let el = null;
+    if (frag) {
+      // 脚注 id（ch1_back 之类）每一章都有，必须在目标章的 section 内找，否则会跳到别的章
+      const sg = R.seg.find((x) => x.ch === ch);
+      const esc = (window.CSS && CSS.escape) ? CSS.escape(frag) : frag.replace(/["\\]/g, '\\$&');
+      try {
+        if (sg && sg.el) el = sg.el.querySelector('[id="' + frag + '"]') || sg.el.querySelector('#' + esc);
+        if (!el) el = R.doc.getElementById(frag);
+      } catch (e) { try { el = R.doc.getElementById(frag); } catch (e2) {} }
+    }
+    if (el) {
+      const off = Math.max(0, offsetOfPoint(el, 0));
+      if (R.mode === 'scroll') {
+        scrollToOffsetNow(off);
+        const loc = toLocalOff(off);
+        R.chapterIndex = loc.ch;
+      } else {
+        goPage(pageOfOffset(off));
+      }
+    } else if (R.mode === 'scroll') {
+      if (!scrollToChapterStart(ch)) scrollToOffsetNow(toGlobalOff(ch, 0));
+      R.chapterIndex = ch;
+    } else {
+      goPage(0);
+    }
+    updateHeader();
+    updateProgressUi();
+    scheduleSave();
+    showJumpBack('跳转');
+    return true;
+  }
+
+  function placeOffset(off) {
     const pt = pointOfOffset(off);
     if (!pt) return;
     try {
@@ -1280,11 +1380,30 @@ const Reader = (() => {
     } catch (e) {}
   }
 
+  function scrollToOffsetNow(off) {
+    placeOffset(off);
+    settle(() => { if (R.doc && R.mode === 'scroll') placeOffset(off); });
+  }
+
   /* ============================ iframe 事件 ============================ */
+  /* 把 <a href> 改成 data-href：iframe 就不会自己导航，跳转全由阅读器接管 */
+  function neutralizeLinks(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('a[href]').forEach((a) => {
+      const h = a.getAttribute('href');
+      if (!h) return;
+      a.setAttribute('data-href', h);
+      a.removeAttribute('href');
+      a.style.cursor = 'pointer';
+    });
+  }
+
   function bindFrameEvents() {
     const doc = R.doc, win = R.win;
+    neutralizeLinks(doc);
     doc.addEventListener('mouseup', onMouseUp);
     doc.addEventListener('keyup', onMouseUp);
+    doc.addEventListener('click', onLinkClick, true);
     doc.addEventListener('click', onClick);
     // 点正文（iframe 里的文档）也要能关掉 Aa / ⋯ 浮层：外层的 document click 收不到 iframe 内的点击
     doc.addEventListener('mousedown', () => { hideSelMenu(); closePanels(); });
@@ -1343,6 +1462,28 @@ const Reader = (() => {
     };
     const rect = range.getBoundingClientRect();
     showSelMenu(rect, text);
+  }
+
+  /* 正文里的 <a>：书内链接自己接管，别让 iframe 自己跳文档（那样会跟阅读状态脱节） */
+  function onLinkClick(e) {
+    let a = e.target;
+    while (a && a !== R.doc && a.nodeType === 1 && a.localName !== 'a') a = a.parentNode;
+    if (!a || a.nodeType !== 1 || a.localName !== 'a') return;
+    const href = a.getAttribute('data-href') || a.getAttribute('href') || '';
+    if (!href || /^javascript:/i.test(href)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (/^mailto:/i.test(href)) { api.openExternal(href); return; }
+    if (/^https?:/i.test(href)) {
+      // 有些书用 http://popImage?src=... 这类假地址做放大图，别真去开浏览器
+      let host = '';
+      try { host = new URL(href).hostname; } catch (e) {}
+      if (host.includes('.')) api.openExternal(href);
+      return;
+    }
+    const t = chapterIndexOfHref(href);
+    if (t.ch < 0) return;
+    jumpToAnchor(t.ch, t.frag ? decodeURIComponent(t.frag) : '');
   }
 
   function onClick(e) {
@@ -1932,7 +2073,7 @@ const Reader = (() => {
       el.onclick = async () => {
         const h = hits[Number(el.dataset.i)];
         closeSearch();
-        await jumpTo(h.chapter, h.offset, '搜索：' + q);
+        await jumpTo(h.chapter, h.offset, '搜索：' + q, { fresh: true });
         setTimeout(() => highlightSearch(h.chapter, h.offset, h.length), 120);
       };
     });

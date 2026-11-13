@@ -1,6 +1,6 @@
 {
   "name": "linuxreader",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "LinuxReader —— Linux 桌面电子书阅读器（EPUB/PDF、高亮笔记、歌词模式、WebDAV 同步）",
   "main": "src/main/main.js",
   "author": "shao-jun <shao-jun@users.noreply.github.com>",
